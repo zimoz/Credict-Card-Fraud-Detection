@@ -1,0 +1,220 @@
+---
+title: "Credit Card Fraud Detection"
+author: "Zimo Zhu"
+date: "17/11/2019"
+output: html_document
+---
+
+```{R}
+library(ggplot2)
+library(dplyr)
+library(caret)
+library(pROC)
+library(caTools)
+library(DMwR)
+library(h2o)
+```
+
+
+```{R}
+dt <- read.csv("creditcard.csv")
+```
+
+
+```{R}
+summary(dt)
+```
+
+
+```{R}
+sum(dt$Class)/nrow(dt)
+```
+
+No Frauds 99.83 % of the dataset
+Frauds 0.17 % of the dataset
+
+
+# Looking at the distribution of variables
+```{R}
+ggplot(dt,aes(x = Amount)) + geom_histogram(aes(y=..density..),color = "black", fill = "white") + geom_density(alpha = 0.2, fill ="#FF6666")
+```
+
+
+```{R}
+ggplot(dt,aes(x = Time)) + geom_histogram(aes(y=..density..),color = "black", fill = "white") + geom_density(alpha = 0.2, fill ="#FF6666")
+```
+
+We need to scale these two variables
+
+```{r}
+dt1 <- dt %>% mutate(Time_scaled = scale(Time),Amount_scaled = scale(Amount)) %>% mutate(Time = NULL, Amount = NULL)
+```
+
+
+```{R}
+dt1$Class <- factor(ifelse(dt1$Class==0,"0","1"))
+```
+
+
+```{r}
+splitIndex <- createDataPartition(dt1$Class, p = .75,
+                                  list = FALSE,
+                                  times = 1)
+```
+
+
+```{R}
+train1 <- dt1[splitIndex,]
+test <- dt1[-splitIndex,]
+```
+
+```{r}
+table(train$Class)
+table(test$Class)
+```
+
+
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+```
+
+
+# Perform Synthetic Minority Over-sampling Technique (SMOTE) 
+```{r}
+train <- SMOTE(Class~., train1, perc.over = 400 , k =3, perc.under = 1000)
+```
+
+
+# Visualization
+
+```{R}
+sample <- sample_n(train1, 10000)
+```
+
+```{R}
+
+```
+
+```{r}
+p1 <- ggplot(sample, aes(x = V1, y = V2, col = Class)) + 
+  geom_point(alpha = 0.3) + 
+  facet_wrap(~ Class, labeller = labeller(Class = c("1" = "Fraud", "0" = "Not Fraud"))) + 
+  labs(title = "Before SMOTE", 
+       subtitle = "10,000 Random Sample", 
+       col = "Class") + 
+  scale_x_continuous(limits = c(min(sample$V1), max(sample$V1))) + 
+  scale_y_continuous(limits = c(min(sample$V2), max(sample$V2))) + 
+  theme(legend.position = "none")
+```
+
+```{R}
+p2 <- ggplot(train, aes(x = V1, y = V2, col = Class)) + 
+  geom_point(alpha = 0.3) + 
+  facet_wrap(~ Class, labeller = labeller(Class = c("1" = "Fraud", "0" = "Not Fraud"))) + 
+  labs(title = "After SMOTE", 
+       
+       col = "Class") + 
+  scale_x_continuous(limits = c(min(sample$V1), max(sample$V1))) + 
+  scale_y_continuous(limits = c(min(sample$V2), max(sample$V2))) + 
+  theme(legend.position = "none")
+```
+
+```{R}
+p3 <- ggplot(train1, aes(x = V1, y = V2, col = Class)) + 
+  geom_point(alpha = 0.3) + 
+  facet_wrap(~ Class, labeller = labeller(Class = c("1" = "Fraud", "0" = "Not Fraud"))) + 
+  labs(title = "Before SMOTE", 
+       
+       col = "Class") + 
+  scale_x_continuous(limits = c(min(train1$V1), max(train1$V1))) + 
+  scale_y_continuous(limits = c(min(train1$V2), max(train1$V2))) + 
+  theme(legend.position = "none")
+```
+
+# Training model
+```{R}
+tbmodel <- train(Class ~ ., data = train, method = "treebag",
+                 trControl = ctrl)
+```
+
+```{r}
+rf <- train(Class ~ . , data=train, method = "rf")
+```
+
+```{R}
+logitboost <- train(Class ~. , data=train , method = "LogitBoost")
+```
+
+```{r}
+xgbtree<- train(Class ~. , data = train , method = "xgbTree")
+```
+
+```{r}
+h2o.init()
+```
+
+```{r}
+train_h <- as.h2o(train)
+test_h <- as.h2o(test)
+x <- names(train_h)[-29]
+y <- "Class"
+```
+
+```{r}
+automl <- h2o.automl(x, y , training_frame = train_h , nfolds = 3, max_models = 30)
+```
+
+```{R}
+xgb <- h2o.xgboost(x, y , training_frame = train_h, nfolds = 10 , max_depth = 12)
+```
+
+```{r}
+xgb_pred <- h2o.predict(xgb,test_h)
+xgb_pred <- factor(ifelse(as.data.frame(xgb_pred$predict) ==0,"0","1"))
+```
+
+
+
+```{R}
+true_y <- test$Class
+test$Class <- NULL
+```
+
+
+```{r}
+pred_treebag <- predict(tbmodel$finalModel, test)
+pred_rf <- predict(rf$finalModel, test)
+pred_logitboost <- predict(logitboost$finalModel, test)
+pred_xgbtree <- predict(xgbtree, test)
+```
+
+```{R}
+c_treebag <- confusionMatrix(data = pred_treebag, reference = true_y,positive = "1")
+c_rf <-confusionMatrix(data = pred_rf, reference = true_y, positive = "1")
+c_logitboost<-confusionMatrix(data = pred_logitboost, reference = true_y, positive = "1")
+c_xgbtree <- confusionMatrix(data = pred_xgbtree, reference = true_y, positive = "1")
+c_xgb <- confusionMatrix(data= xgb_pred, reference = true_y, positive = "1")
+```
+
+
+```{R}
+roc_treebag <- roc(true_y, factor(pred_treebag, ordered = T ), levels = c(0,1), direction = "<",plot = T, print.auc = T)
+roc_rf <- roc(true_y, factor(pred_rf, ordered = T ), levels = c(0,1), direction = "<", plot = T,print.auc = T)
+roc_logitboost <- roc(true_y, factor(pred_logitboost, ordered = T ), levels = c(0,1), direction = "<",plot = T, print.auc = T)
+roc_xgbtree <- roc(true_y, factor(pred_xgbtree, ordered = T ), levels = c(0,1), direction = "<",plot = T, print.auc = T)
+roc_xgb <- roc(true_y, factor(xgb_pred, ordered = T ), levels = c(0,1), direction = "<", plot = T, print.auc = T)
+```
+
+```{R}
+par(mfrow=c(2,2))
+plot(roc_treebag, main = "Bagged Classification Tree",print.auc = T)
+plot(roc_rf, main = "Random Forest",print.auc = T)
+plot(roc_logitboost, main = "Boosted Logistic Regression",print.auc = T)
+plot(roc_xgbtree, main = "Extreme Boosted Tree",print.auc = T)
+
+```
+
+
+
+
+
